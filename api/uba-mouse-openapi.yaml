@@ -1,0 +1,391 @@
+openapi: 3.0.3
+info:
+  title: UBA Mouse Service 
+  description: Machine Learning service for detecting bot behavior from mouse movement patterns.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:3001
+    description: Local development server
+  - url: http://uba-mouse:3001
+    description: Docker container service
+
+tags:
+  - name: Prediction
+    description: ML model prediction endpoints
+
+paths:
+  /predict:
+    post:
+      tags:
+        - Prediction
+      summary: Predict if mouse behavior is from a bot or human
+      description: |
+        Analyzes mouse movement data to classify behavior as BOT or Human.
+
+        **Feature Engineering:**
+        - Preprocesses raw mouse events into session features
+        - Extracts 200+ features including:
+          - Velocity statistics (mean, std, min, max)
+          - Acceleration patterns
+          - Curvature analysis (straightness of paths)
+          - Jerk (rate of acceleration change)
+          - Temporal features (pause duration, click timing)
+          - Spatial distribution (coverage, clustering)
+
+        **Model Pipeline:**
+        1. Preprocess: Clean and normalize mouse events
+        2. Feature Extraction: Compute 200+ behavioral features
+        3. Prediction: XGBoost/SVM classification
+        4. Output: Label + probability score
+
+      operationId: predict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictionRequest'
+            examples:
+              human_behavior:
+                summary: Human-like mouse movements
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "move"
+                      x: 100
+                      y: 100
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890173
+                      button: ""
+                      state: "move"
+                      x: 105
+                      y: 103
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890223
+                      button: "left"
+                      state: "click"
+                      x: 110
+                      y: 108
+                      key: null
+                      deltaY: 0
+
+              bot_behavior:
+                summary: Bot-like mouse movements (straight line, constant speed)
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "move"
+                      x: 0
+                      y: 0
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890133
+                      button: ""
+                      state: "move"
+                      x: 10
+                      y: 10
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890143
+                      button: "left"
+                      state: "click"
+                      x: 20
+                      y: 20
+                      key: null
+                      deltaY: 0
+
+      responses:
+        '200':
+          description: Successful prediction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                bot_detected:
+                  summary: Bot detected with high confidence
+                  value: ["BOT", 0.95]
+
+                human_detected:
+                  summary: Human behavior detected
+                  value: ["Human", 0.88]
+
+                error_fallback:
+                  summary: Error occurred, safe default returned
+                  value: ["Human", 1.0]
+
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        '500':
+          description: Internal model error (returns safe default)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                safe_default:
+                  summary: Error occurred, defaulting to Human
+                  value: ["Human", 1.0]
+
+components:
+  schemas:
+    PredictionRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: Array of mouse movement events
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MouseEvent'
+
+    MouseEvent:
+      type: object
+      required:
+        - timestamp
+        - button
+        - state
+        - x
+        - y
+        - key
+        - deltaY
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1234567890123
+        button:
+          type: string
+          enum: ["left", "right", "middle", ""]
+          description: Mouse button (empty for movement)
+          example: "left"
+        state:
+          type: string
+          enum:
+            - click
+            - move
+            - down
+            - up
+            - scroll
+          description: Mouse event type
+          example: "move"
+        x:
+          type: number
+          format: float
+          description: X coordinate in pixels
+          example: 450.5
+        y:
+          type: number
+          format: float
+          description: Y coordinate in pixels
+          example: 320.8
+        key:
+          type: string
+          nullable: true
+          description: Always null for mouse events
+          example: null
+        deltaY:
+          type: number
+          format: float
+          description: Scroll delta (0 for mouse movements)
+          example: 0
+
+    PredictionResponse:
+      type: array
+      description: |
+        Prediction result as tuple: [label, probability]
+        - label: "BOT" or "Human"
+        - probability: Confidence score (0.0 to 1.0)
+      minItems: 2
+      maxItems: 2
+      items:
+        oneOf:
+          - type: string
+            enum: ["BOT", "Human"]
+          - type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+      example: ["BOT", 0.95]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+x-documentation:
+  feature_categories: |
+    **200+ Engineered Features:**
+
+    1. **Velocity Features (40+)**
+       - Mean, median, std, min, max velocity
+       - Velocity percentiles (25th, 75th, 90th)
+       - Acceleration statistics
+       - Deceleration patterns
+
+    2. **Curvature Features (30+)**
+       - Path straightness metrics
+       - Angular changes between movements
+       - Radius of curvature statistics
+       - Bezier curve fitting error
+
+    3. **Jerk Features (25+)**
+       - Rate of acceleration change
+       - Smoothness metrics
+       - Sudden movement detection
+       - Jerk variance and patterns
+
+    4. **Temporal Features (40+)**
+       - Time between events
+       - Pause duration statistics
+       - Click timing patterns
+       - Movement rhythm analysis
+
+    5. **Spatial Features (35+)**
+       - Coverage area
+       - Movement density
+       - Click position clustering
+       - Trajectory length and complexity
+
+    6. **Click Features (30+)**
+       - Click-to-click distance
+       - Click timing variability
+       - Double-click patterns
+       - Click-after-move timing
+
+  bot_detection_patterns: |
+    **Characteristics of Bot Mouse Behavior:**
+
+    1. **Perfect Geometry**
+       - Straight lines (low curvature variance)
+       - Constant velocity (low acceleration variance)
+       - No micro-corrections or jitter
+
+    2. **Unnatural Timing**
+       - Constant inter-event intervals
+       - No reaction time variability
+       - Instant click-after-move (< 50ms)
+
+    3. **Missing Human Traits**
+       - No cursor inertia or overshoot
+       - No hesitation or exploration
+       - No corrective movements
+       - Perfectly centered clicks
+
+    4. **Statistical Anomalies**
+       - Velocity distribution too uniform
+       - No acceleration/deceleration curves
+       - Spatial coverage too systematic
+
+  model_architecture: |
+    **Pipeline Structure:**
+
+    ```python
+    class MousePipeline:
+        def preprocess(session: pd.DataFrame) -> pd.DataFrame:
+            # Clean data, remove outliers, normalize
+            # Group events into movement segments
+            # Calculate basic kinematics
+
+        def extract_features(preprocessed: pd.DataFrame) -> pd.DataFrame:
+            # Compute 200+ behavioral features
+            # Aggregate statistics per session
+            # Create feature vector for classifier
+
+        def predict(features: pd.DataFrame) -> Tuple[str, float]:
+            # XGBoost/SVM classification
+            # Return label and probability
+    ```
+
+    **Model Details:**
+    - Algorithm: XGBoost Classifier / SVM
+    - Features: 200+ engineered features
+    - Training Data: Human vs. bot labeled sessions
+    - Accuracy: ~95%
+    - False Positive Rate: <5%
+
+  error_handling: |
+    **Safe Defaults:**
+
+    If ANY error occurs during prediction:
+    - Log the error
+    - Return ("Human", 1.0) to avoid blocking users
+    - Prevents false positives that could impact UX
+
+    **Exception Scenarios:**
+    - Insufficient data points
+    - Feature extraction failure
+    - Model inference error
+    - Invalid data format
+
+  integration: |
+    **Called By:** uba-api service
+
+    **Request Flow:**
+    ```
+    client-collector → uba-api → uba-mouse (this service)
+                                       → uba-keyboard
+                                       → uba-scroll
+    ```
+
+    **BentoML Deployment:**
+    ```python
+    @bentoml.service
+    class MouseBehaviorService:
+        @bentoml.api
+        async def predict(
+            data: Annotated[pd.DataFrame, DataframeSchema(...)]
+        ) -> Tuple[str, float]:
+            # Prediction logic
+    ```
+
+  example_usage: |
+    **Python Example:**
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:3001/predict",
+        json={
+            "data": [
+                {"timestamp": 1234567890123, "button": "", "state": "move",
+                 "x": 100, "y": 100, "key": None, "deltaY": 0},
+                {"timestamp": 1234567890173, "button": "", "state": "move",
+                 "x": 105, "y": 103, "key": None, "deltaY": 0},
+                {"timestamp": 1234567890223, "button": "left", "state": "click",
+                 "x": 110, "y": 108, "key": None, "deltaY": 0}
+            ]
+        }
+    )
+
+    label, probability = response.json()
+    print(f"Prediction: {label} ({probability:.2%})")
+    ```
+
+    **cURL Example:**
+    ```bash
+    curl -X POST http://localhost:3001/predict \
+      -H "Content-Type: application/json" \
+      -d '{
+        "data": [
+          {"timestamp": 1234567890123, "button": "", "state": "move",
+           "x": 100, "y": 100, "key": null, "deltaY": 0}
+        ]
+      }'
+    ```
