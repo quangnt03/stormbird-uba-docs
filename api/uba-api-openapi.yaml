@@ -1,0 +1,408 @@
+openapi: 3.0.3
+info:
+  title: UBA API
+  description: Machine Learning Orchestration Gateway for User Behavior Analysis Bot Detection.
+  version: 1.0.0
+servers:
+  - url: http://localhost:3005
+    description: Local development server
+  - url: http://uba-gateway-service:3005
+    description: Docker container service
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: Detection
+    description: Bot detection endpoints
+
+paths:
+  /detect_mouse:
+    post:
+      tags:
+        - Detection
+      summary: Detect bot behavior from user interactions
+      description: |
+        Analyzes user interaction events (mouse, keyboard, scroll, touch) to determine
+        if the behavior is from a human or automated bot.
+
+        **Device Type Routing:**
+        - `laptop`: Executes 3 models in parallel (mouse, keyboard, scroll)
+        - `mobile`: Executes single model (swiping/touch)
+      operationId: detectMouse
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DetectionRequest'
+            examples:
+              laptop_interaction:
+                summary: Laptop user interaction (mouse + keyboard)
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: "left"
+                      state: "click"
+                      x: 450
+                      y: 320
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890456
+                      button: ""
+                      state: "move"
+                      x: 455
+                      y: 325
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890789
+                      button: ""
+                      state: "keydown"
+                      x: 455
+                      y: 325
+                      key: "a"
+                      deltaY: 0
+                  device_type: "laptop"
+
+              mobile_interaction:
+                summary: Mobile touch interaction
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "touchstart"
+                      x: 200
+                      y: 400
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890223
+                      button: ""
+                      state: "touchmove"
+                      x: 250
+                      y: 450
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890323
+                      button: ""
+                      state: "touchend"
+                      x: 300
+                      y: 500
+                      key: null
+                      deltaY: 0
+                  device_type: "mobile"
+
+              scroll_behavior:
+                summary: Scroll events
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "scroll"
+                      x: 450
+                      y: 320
+                      key: null
+                      deltaY: -100
+                    - timestamp: 1234567890223
+                      button: ""
+                      state: "scroll"
+                      x: 450
+                      y: 420
+                      key: null
+                      deltaY: -150
+                  device_type: "laptop"
+
+      responses:
+        '200':
+          description: Successful bot detection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionResponse'
+              examples:
+                bot_detected:
+                  summary: Bot detected with high confidence
+                  value: ["BOT", 0.92]
+
+                human_detected:
+                  summary: Human detected
+                  value: ["Human", 0.85]
+
+                low_confidence_human:
+                  summary: Human detected with lower confidence
+                  value: ["Human", 0.65]
+
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_data:
+                  summary: Invalid data format
+                  value:
+                    error: "Bad Request"
+                    message: "Data must be an array of interaction events"
+
+                invalid_device_type:
+                  summary: Invalid device type
+                  value:
+                    error: "Bad Request"
+                    message: "device_type must be 'laptop' or 'mobile'"
+
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                model_error:
+                  summary: ML model error
+                  value:
+                    error: "Internal Server Error"
+                    message: "Failed to execute ML model inference"
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Check if the service is running and healthy
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  service:
+                    type: string
+                    example: "uba-api"
+                  timestamp:
+                    type: string
+                    format: date-time
+                    example: "2025-12-09T10:30:00Z"
+
+components:
+  schemas:
+    DetectionRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: Array of user interaction events
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/InteractionEvent'
+        device_type:
+          type: string
+          enum: [laptop, mobile]
+          default: laptop
+          description: |
+            Device type determines which ML models to execute:
+            - `laptop`: Mouse + Keyboard + Scroll models
+            - `mobile`: Touch/Swipe model
+
+    InteractionEvent:
+      type: object
+      required:
+        - timestamp
+        - button
+        - state
+        - x
+        - y
+        - key
+        - deltaY
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1234567890123
+        button:
+          type: string
+          enum: ["left", "right", "middle", ""]
+          description: Mouse button pressed (empty string for non-click events)
+          example: "left"
+        state:
+          type: string
+          enum:
+            - click
+            - move
+            - down
+            - up
+            - scroll
+            - keydown
+            - keyup
+            - touchstart
+            - touchmove
+            - touchend
+          description: Type of interaction event
+          example: "click"
+        x:
+          type: number
+          format: float
+          description: X coordinate in pixels
+          example: 450
+        y:
+          type: number
+          format: float
+          description: Y coordinate in pixels
+          example: 320
+        key:
+          type: string
+          nullable: true
+          description: Keyboard key pressed (null for mouse/touch events)
+          example: "a"
+        deltaY:
+          type: number
+          format: float
+          description: Scroll delta (0 for non-scroll events)
+          example: -100
+
+    DetectionResponse:
+      type: array
+      description: |
+        Bot detection result as a tuple: [label, probability]
+        - label: "BOT" or "Human"
+        - probability: Float between 0.0 and 1.0 indicating confidence
+      minItems: 2
+      maxItems: 2
+      items:
+        oneOf:
+          - type: string
+            enum: ["BOT", "Human"]
+          - type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+      example: ["BOT", 0.92]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error type
+          example: "Bad Request"
+        message:
+          type: string
+          description: Detailed error message
+          example: "Invalid data format"
+
+x-documentation:
+  decision_logic: |
+    **Laptop Device Type:**
+
+    Executes 3 models in parallel using asyncio.TaskGroup:
+    1. uba-mouse (mouse behavior analysis)
+    2. uba-keyboard (keystroke dynamics)
+    3. uba-scroll (scroll pattern analysis)
+
+    Decision priority:
+    - If mouse model detects BOT → Return ("BOT", mouse_probability)
+    - Else if keyboard model detects BOT → Return ("BOT", keyboard_probability)
+    - Else return ("Human", min(mouse_prob, keyboard_prob))
+
+    **Mobile Device Type:**
+
+    Executes single model:
+    - uba-swiping (touch/swipe analysis)
+    - Returns result directly
+
+  error_handling: |
+    **Graceful Degradation:**
+
+    If any ML model fails:
+    - Catches exception and logs error
+    - Returns safe default: ("Human", 1.0)
+    - Prevents false positives that could block legitimate users
+
+    **Model Communication:**
+
+    - HTTP POST requests to BentoML model endpoints
+    - Timeout: 30 seconds per model
+    - Retry: No automatic retries (handled by caller)
+
+  performance: |
+    **Parallel Execution:**
+
+    Laptop mode executes 3 models concurrently:
+    - Total latency ≈ max(model1, model2, model3)
+    - Typical response time: 50-200ms
+
+    **Throughput:**
+
+    - Horizontal scaling via BentoML
+    - Load balancing across model replicas
+    - Stateless design for easy scaling
+
+  integration_examples: |
+    **cURL Example:**
+    ```bash
+    curl -X POST http://localhost:3005/detect_mouse \
+      -H "Content-Type: application/json" \
+      -d '{
+        "data": [
+          {"timestamp": 1234567890123, "button": "left", "state": "click",
+           "x": 450, "y": 320, "key": null, "deltaY": 0}
+        ],
+        "device_type": "laptop"
+      }'
+    ```
+
+    **Python Example:**
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:3005/detect_mouse",
+        json={
+            "data": [
+                {
+                    "timestamp": 1234567890123,
+                    "button": "left",
+                    "state": "click",
+                    "x": 450,
+                    "y": 320,
+                    "key": None,
+                    "deltaY": 0
+                }
+            ],
+            "device_type": "laptop"
+        }
+    )
+
+    label, probability = response.json()
+    print(f"Detection: {label} (confidence: {probability:.2%})")
+    ```
+
+    **JavaScript Example:**
+    ```javascript
+    const response = await fetch('http://localhost:3005/detect_mouse', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        data: [{
+          timestamp: Date.now(),
+          button: 'left',
+          state: 'click',
+          x: 450,
+          y: 320,
+          key: null,
+          deltaY: 0
+        }],
+        device_type: 'laptop'
+      })
+    });
+
+    const [label, probability] = await response.json();
+    console.log(`Detection: ${label} (${(probability * 100).toFixed(1)}%)`);
+    ```
