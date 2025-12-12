@@ -1,0 +1,491 @@
+asyncapi: 3.0.0
+
+info:
+  title: Client Collector WebSocket API
+  version: 1.0.0
+  description: |
+    WebSocket API for collecting real-time user interaction data from client browsers, acts as the primary gateway for receiving encrypted interaction events
+    (mouse, keyboard, scroll, touch), authenticating clients using JWT tokens, and
+    forwarding data to ML models for bot detection.
+
+servers:
+  development:
+    host: localhost:3000
+    protocol: ws
+    description: Development WebSocket server
+    tags:
+      - name: env
+        description: development
+  production:
+    host: your-domain.com:3000
+    protocol: wss
+    description: Production WebSocket server (secure)
+    tags:
+      - name: env
+        description: production
+
+defaultContentType: application/json
+
+channels:
+  authenticate:
+    address: authenticate
+    messages:
+      AuthenticateRequest:
+        $ref: '#/components/messages/AuthenticateRequest'
+      AuthResult:
+        $ref: '#/components/messages/AuthResult'
+    description: |
+      Authentication channel for validating client JWT tokens.
+      Clients should authenticate either via handshake headers or by sending
+      an authenticate event after connection.
+
+  mouseChanged:
+    address: mouseChanged
+    messages:
+      MouseChangedRequest:
+        $ref: '#/components/messages/MouseChangedRequest'
+    description: |
+      Channel for receiving encrypted user interaction events in batch.
+      Events include mouse movements, clicks, keyboard input, and scroll actions.
+      Data is encrypted client-side using AES-256-GCM before transmission.
+
+  serverPong:
+    address: server-pong
+    messages:
+      ServerPong:
+        $ref: '#/components/messages/ServerPong'
+    description: |
+      Server heartbeat channel that sends periodic pings to keep the
+      WebSocket connection alive. Emitted every 5 seconds.
+
+  error:
+    address: error
+    messages:
+      ErrorMessage:
+        $ref: '#/components/messages/ErrorMessage'
+    description: |
+      Error notification channel for communicating processing failures
+      to the client.
+
+operations:
+  authenticateClient:
+    action: send
+    channel:
+      $ref: '#/channels/authenticate'
+    summary: Authenticate client connection
+    description: |
+      Clients send JWT token for authentication. The server validates the token
+      and responds with an auth-result event indicating success or failure.
+    messages:
+      - $ref: '#/channels/authenticate/messages/AuthenticateRequest'
+    reply:
+      # address: authenticate
+      channel:
+        $ref: '#/channels/authenticate'
+      messages:
+        - $ref: '#/channels/authenticate/messages/AuthResult'
+
+  receiveAuthResult:
+    action: receive
+    channel:
+      $ref: '#/channels/authenticate'
+    summary: Receive authentication result
+    description: Server response indicating authentication success or failure
+    messages:
+      - $ref: '#/channels/authenticate/messages/AuthResult'
+
+  sendMouseEvents:
+    action: send
+    channel:
+      $ref: '#/channels/mouseChanged'
+    summary: Send encrypted interaction events
+    description: |
+      Clients send encrypted user interaction data for bot detection analysis.
+      The payload is encrypted using AES-256-GCM and includes mouse, keyboard,
+      and scroll events along with a JWT token and domain information.
+    messages:
+      - $ref: '#/channels/mouseChanged/messages/MouseChangedRequest'
+
+  receiveHeartbeat:
+    action: receive
+    channel:
+      $ref: '#/channels/serverPong'
+    summary: Receive server heartbeat
+    description: Server sends heartbeat every 5 seconds to maintain connection
+    messages:
+      - $ref: '#/channels/serverPong/messages/ServerPong'
+
+  receiveError:
+    action: receive
+    channel:
+      $ref: '#/channels/error'
+    summary: Receive error notification
+    description: Server sends error messages when event processing fails
+    messages:
+      - $ref: '#/channels/error/messages/ErrorMessage'
+
+components:
+  messages:
+    AuthenticateRequest:
+      name: AuthenticateRequest
+      title: Authentication Request
+      summary: Client authentication with JWT token
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/AuthenticatePayload'
+      examples:
+        - name: validAuthentication
+          summary: Valid JWT authentication
+          payload:
+            client_token: eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCJ9.eyJjbGllbnRfc2VjcmV0IjoidXNlcl9hYmMxMjMiLCJpYXQiOjE3MDI1NjAwMDAsImV4cCI6MTcwMzE2NDgwMH0.signature
+
+    AuthResult:
+      name: AuthResult
+      title: Authentication Result
+      summary: Server response with authentication status
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/AuthResultPayload'
+      examples:
+        - name: authSuccess
+          summary: Successful authentication
+          payload:
+            success: true
+            message: Authentication successful
+        - name: authFailure
+          summary: Failed authentication
+          payload:
+            success: false
+            message: Invalid token
+
+    MouseChangedRequest:
+      name: MouseChangedRequest
+      title: Mouse/Interaction Events
+      summary: Encrypted user interaction events
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/EncryptedPayload'
+      examples:
+        - name: encryptedMouseEvents
+          summary: Encrypted interaction data
+          payload:
+            iv: SGVsbG8gV29ybGQh
+            encryptedData: VGhpcyBpcyBlbmNyeXB0ZWQgZGF0YQ==
+            tag: VGFnIGZvciBBRVMtR0NN
+
+    ServerPong:
+      name: ServerPong
+      title: Server Heartbeat
+      summary: Periodic heartbeat from server
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/HeartbeatPayload'
+      examples:
+        - name: heartbeat
+          summary: Server heartbeat message
+          payload:
+            timestamp: 1702560000000
+            clientId: socket-abc123
+
+    ErrorMessage:
+      name: ErrorMessage
+      title: Error Notification
+      summary: Error message from server
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ErrorPayload'
+      examples:
+        - name: processingError
+          summary: Processing failure
+          payload:
+            message: Failed to process your request
+
+  schemas:
+    AuthenticatePayload:
+      type: object
+      required:
+        - client_token
+      properties:
+        client_token:
+          type: string
+          format: jwt
+          description: JWT token for client authentication (ES384 algorithm)
+          example: eyJhbGciOiJFUzM4NCIsInR5cCI6IkpXVCJ9...
+
+    AuthResultPayload:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          description: Authentication success status
+        message:
+          type: string
+          description: Human-readable authentication result message
+          examples:
+            - Authentication successful
+            - Invalid token
+            - Authentication failed
+
+    EncryptedPayload:
+      type: object
+      required:
+        - iv
+        - encryptedData
+        - tag
+      properties:
+        iv:
+          type: string
+          format: base64
+          description: Base64-encoded initialization vector for AES-256-GCM
+          example: SGVsbG8gV29ybGQh
+        encryptedData:
+          type: string
+          format: base64
+          description: Base64-encoded encrypted payload
+          example: VGhpcyBpcyBlbmNyeXB0ZWQgZGF0YQ==
+        tag:
+          type: string
+          format: base64
+          description: Base64-encoded authentication tag for AES-GCM
+          example: VGFnIGZvciBBRVMtR0NN
+      description: |
+        Encrypted payload structure for AES-256-GCM encryption.
+        After decryption, the payload contains MouseData structure.
+
+    MouseData:
+      type: object
+      required:
+        - client_token
+        - domain
+        - data
+      properties:
+        client_token:
+          type: string
+          format: jwt
+          description: JWT token (ES384) containing client credentials
+        domain:
+          type: string
+          format: hostname
+          description: Website domain where events were captured
+          example: example.com
+        data:
+          type: array
+          description: Array of user interaction events
+          items:
+            $ref: '#/components/schemas/InteractionEvent'
+      description: |
+        Decrypted payload structure containing client authentication
+        and interaction events.
+
+    InteractionEvent:
+      type: object
+      required:
+        - timestamp
+        - x
+        - y
+        - button
+        - state
+        - deltaY
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1702560123456
+        x:
+          type: number
+          format: float
+          description: Mouse X coordinate
+          example: 450.5
+        y:
+          type: number
+          format: float
+          description: Mouse Y coordinate
+          example: 320.8
+        button:
+          type: string
+          enum:
+            - left
+            - right
+            - middle
+            - ""
+          description: Mouse button pressed (empty string for non-click events)
+          example: left
+        state:
+          type: string
+          enum:
+            - click
+            - move
+            - down
+            - up
+            - scroll
+            - keydown
+            - keyup
+          description: Interaction event type
+          example: click
+        key:
+          type: string
+          nullable: true
+          description: Key pressed (for keyboard events only)
+          example: Enter
+        deltaY:
+          type: number
+          format: float
+          description: Scroll delta (for scroll events)
+          example: -120
+
+    HeartbeatPayload:
+      type: object
+      required:
+        - timestamp
+        - clientId
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Server timestamp in milliseconds
+          example: 1702560000000
+        clientId:
+          type: string
+          description: Socket.io client identifier
+          example: socket-abc123
+
+    ErrorPayload:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Error message description
+          example: Failed to process your request
+
+x-connection-lifecycle:
+  onConnect:
+    description: |
+      When a client connects to the WebSocket:
+      1. Server logs connection with client socket ID
+      2. Server checks for JWT token in handshake auth or headers
+      3. If token exists, server validates and stores authentication status
+      4. Server starts heartbeat interval (emits server-pong every 5 seconds)
+
+  onDisconnect:
+    description: |
+      When a client disconnects:
+      1. Server clears heartbeat interval timer
+      2. Server removes client from authentication Map
+      3. Server logs disconnection with socket ID
+      4. Connection is closed gracefully
+
+x-security:
+  authentication:
+    type: JWT
+    algorithm: ES384
+    description: |
+      JWT token authentication using ES384 (ECDSA with P-384 curve and SHA-384).
+      Tokens contain client_secret claim used for database persistence.
+
+      **Handshake authentication:**
+      ```javascript
+      const socket = io('ws://localhost:3000', {
+        auth: { token: 'your-jwt-token' }
+      });
+      ```
+
+      **Event-based authentication:**
+      ```javascript
+      socket.emit('authenticate', JSON.stringify({
+        client_token: 'your-jwt-token'
+      }));
+      ```
+
+  encryption:
+    algorithm: AES-256-GCM
+    keyDerivation: SHA-256 hash of DECRYPT_KEY environment variable
+    description: |
+      All mouse/interaction data is encrypted client-side before transmission.
+      The server decrypts using a shared key derived from the DECRYPT_KEY
+      environment variable.
+
+x-external-dependencies:
+  clickhouse:
+    description: ClickHouse database for storing mouse event records
+    table: mouse_events
+    operation: INSERT
+    connection: |
+      Host: ${CLICKHOUSE_HOST}:${CLICKHOUSE_PORT}
+      Database: ${CLICKHOUSE_DB}
+      User: ${CLICKHOUSE_USER}
+
+  mlService:
+    description: ML service for bot detection
+    url: ${API_AI_URL}/detect_mouse
+    method: POST
+    request:
+      contentType: application/json
+      schema:
+        type: object
+        properties:
+          data:
+            type: array
+            description: Array of interaction events
+    response:
+      contentType: application/json
+      schema:
+        type: array
+        items:
+          - type: string
+            enum: ["BOT", "Human"]
+          - type: number
+            minimum: 0.0
+            maximum: 1.0
+      example: ["BOT", 0.92]
+
+x-environment-variables:
+  - name: APP_PORT
+    type: number
+    default: 3000
+    description: WebSocket server port
+
+  - name: JWT_SECRET
+    type: string
+    required: true
+    description: Secret key for JWT token validation
+
+  - name: DECRYPT_KEY
+    type: string
+    required: true
+    description: AES-256 encryption key (must be 32 characters)
+
+  - name: API_AI_URL
+    type: string
+    default: http://prx0.x-or.cloud:7018
+    description: ML service endpoint URL
+
+  - name: CLICKHOUSE_HOST
+    type: string
+    required: true
+    description: ClickHouse database hostname
+
+  - name: CLICKHOUSE_PORT
+    type: number
+    default: 8123
+    description: ClickHouse HTTP port
+
+  - name: CLICKHOUSE_USER
+    type: string
+    default: default
+    description: ClickHouse username
+
+  - name: CLICKHOUSE_PASSWORD
+    type: string
+    default: ""
+    description: ClickHouse password
+
+  - name: CLICKHOUSE_DB
+    type: string
+    default: default
+    description: ClickHouse database name
