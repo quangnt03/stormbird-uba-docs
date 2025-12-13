@@ -1,0 +1,438 @@
+openapi: 3.0.3
+info:
+  title: UBA Scroll Service - Scroll Behavior Detection ML Model
+  description: |
+    Machine Learning service for detecting bot behavior from scroll patterns and dynamics.
+
+    **Detection Approach:**
+    - Analyzes temporal grouping and behavioral features from scroll events
+    - Features include: scroll distance, speed, action count, timing patterns
+    - Uses XGBoost gradient boosting classifier
+    - Groups scroll events by 1-second action windows
+    - Detects unnatural scrolling patterns characteristic of bots
+
+    **Bot Indicators:**
+    - Perfectly consistent scroll distances (every scroll same deltaY)
+    - Constant scroll speed throughout session
+    - Mechanical timing intervals between scrolls
+    - Missing human-like variations (hesitations, speed changes)
+    - No natural pauses to read content
+
+    **Model Type:** XGBoost Gradient Boosting Classifier
+    **Framework:** BentoML
+    **Port:** 3004 (default)
+  version: 1.0.0
+  contact:
+    name: UBA Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3004
+    description: Local development server
+  - url: http://uba-scroll:3004
+    description: Docker container service
+
+tags:
+  - name: Prediction
+    description: ML model prediction endpoints
+
+paths:
+  /predict:
+    post:
+      tags:
+        - Prediction
+      summary: Predict if scroll behavior is from a bot or human
+      description: |
+        Analyzes scroll patterns to classify behavior as BOT or Human.
+
+        **Feature Engineering:**
+        - Filters scroll events (button == "scroll")
+        - Groups events by 1-second action windows
+        - Extracts 7 features (4 global + 3 per-action):
+          - Global: total_scroll_distance, avg_scroll_speed, num_scroll_actions, avg_time_between_actions
+          - Per-Action: action_scroll_distance, action_avg_speed, action_time_taken
+
+        **Model Pipeline:**
+        1. Preprocess: Filter scroll events, group by 1-second windows
+        2. Feature Extraction: Compute 7 scroll dynamics features
+        3. Prediction: XGBoost classification
+        4. Output: Label + probability score
+
+      operationId: predict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictionRequest'
+            examples:
+              human_scrolling:
+                summary: Human scrolling with natural rhythm
+                value:
+                  data:
+                    - timestamp: 1234567890100
+                      button: "scroll"
+                      state: "move"
+                      x: 500
+                      y: 300
+                      key: ""
+                      deltaY: -135
+                    - timestamp: 1234567890250
+                      button: "scroll"
+                      state: "move"
+                      x: 500
+                      y: 400
+                      key: ""
+                      deltaY: -98
+                    - timestamp: 1234567890420
+                      button: "scroll"
+                      state: "move"
+                      x: 500
+                      y: 500
+                      key: ""
+                      deltaY: -156
+
+              bot_scrolling:
+                summary: Bot scrolling with constant timing
+                value:
+                  data:
+                    - timestamp: 1234567890100
+                      button: "scroll"
+                      state: "move"
+                      x: 500
+                      y: 300
+                      key: ""
+                      deltaY: -120
+                    - timestamp: 1234567890200
+                      button: "scroll"
+                      state: "move"
+                      x: 500
+                      y: 400
+                      key: ""
+                      deltaY: -120
+                    - timestamp: 1234567890300
+                      button: "scroll"
+                      state: "move"
+                      x: 500
+                      y: 500
+                      key: ""
+                      deltaY: -120
+
+      responses:
+        '200':
+          description: Successful prediction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                bot_detected:
+                  summary: Bot scrolling pattern detected
+                  value: ["BOT", 0.85]
+
+                human_detected:
+                  summary: Human scrolling pattern detected
+                  value: ["Human", 0.92]
+
+                error_fallback:
+                  summary: Error occurred, safe default returned
+                  value: ["Human", 1.0]
+
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        '500':
+          description: Internal model error (returns safe default)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                safe_default:
+                  summary: Error occurred, defaulting to Human
+                  value: ["Human", 1.0]
+
+components:
+  schemas:
+    PredictionRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: Array of scroll events
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ScrollEvent'
+
+    ScrollEvent:
+      type: object
+      required:
+        - timestamp
+        - button
+        - state
+        - x
+        - y
+        - key
+        - deltaY
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1234567890100
+        button:
+          type: string
+          enum: ["scroll"]
+          description: Always "scroll" for scroll events
+          example: "scroll"
+        state:
+          type: string
+          enum: ["move"]
+          description: Event state (always "move" for scroll)
+          example: "move"
+        x:
+          type: number
+          format: float
+          description: Mouse X coordinate during scroll
+          example: 500
+        y:
+          type: number
+          format: float
+          description: Mouse Y coordinate during scroll
+          example: 300
+        key:
+          type: string
+          enum: [""]
+          description: Always empty string for scroll events
+          example: ""
+        deltaY:
+          type: number
+          format: float
+          description: Scroll delta in pixels (negative = scroll up, positive = scroll down)
+          example: -120
+
+    PredictionResponse:
+      type: array
+      description: |
+        Prediction result as tuple: [label, probability]
+        - label: "BOT" or "Human"
+        - probability: Confidence score (0.0 to 1.0)
+      minItems: 2
+      maxItems: 2
+      items:
+        oneOf:
+          - type: string
+            enum: ["BOT", "Human"]
+          - type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+      example: ["BOT", 0.85]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+x-documentation:
+  feature_categories: |
+    **7 Engineered Features:**
+
+    **Global Features (4):**
+    1. total_scroll_distance
+       - Sum of all deltaY values in session
+       - Measures total vertical movement
+       - Bot indicator: Very consistent across sessions
+
+    2. avg_scroll_speed
+       - Mean of (deltaY / time_diff) across all events
+       - Measures average scrolling velocity
+       - Bot indicator: Constant speed, no acceleration/deceleration
+
+    3. num_scroll_actions
+       - Count of distinct 1-second scroll action windows
+       - Measures how many separate scroll gestures
+       - Bot indicator: Regular, evenly spaced actions
+
+    4. avg_time_between_actions
+       - Mean duration of each scroll action window
+       - Measures timing consistency
+       - Bot indicator: Perfect timing intervals
+
+    **Per-Action Features (3 per action):**
+    1. action_scroll_distance
+       - Total deltaY within 1-second action window
+       - Captures individual gesture magnitude
+
+    2. action_avg_speed
+       - Average speed during specific action
+       - Reveals action-level velocity patterns
+
+    3. action_time_taken
+       - Duration of scroll action
+       - Shows temporal characteristics per gesture
+
+  bot_detection_patterns: |
+    **Characteristics of Bot Scroll Behavior:**
+
+    1. **Perfect Distance Consistency**
+       - Every scroll event has identical deltaY value
+       - Example: -120, -120, -120, -120 (no variation)
+       - Missing natural variations in scroll amount
+
+    2. **Constant Speed**
+       - Same scroll speed throughout entire session
+       - No acceleration or deceleration
+       - No speed adjustments based on content
+
+    3. **Mechanical Timing**
+       - Perfectly regular intervals between scroll events
+       - No pauses to read content
+       - Even spacing of action windows
+       - Example: Event every exactly 100ms
+
+    4. **Missing Human Traits**
+       - No scroll corrections or reversals
+       - No variation in action duration
+       - No thinking pauses between sections
+       - No natural rhythm irregularities
+
+  model_architecture: |
+    **Pipeline Structure:**
+
+    ```python
+    class ScrollPipeline:
+        def preprocess(session: pd.DataFrame) -> pd.DataFrame:
+            # Filter scroll events only
+            # Sort by timestamp
+            # Calculate time differences
+            # Normalize deltaY to pixels
+            # Group by 1-second action windows
+
+        def extract_features(preprocessed: pd.DataFrame) -> pd.DataFrame:
+            # Compute 4 global features
+            # Compute 3 per-action features
+            # Combine into feature matrix
+
+        def predict(features: pd.DataFrame) -> Tuple[str, float]:
+            # XGBoost classification
+            # Calculate mean probability
+            # Threshold at 0.5
+            # Return label and probability
+    ```
+
+    **Model Details:**
+    - Algorithm: XGBoost Gradient Boosting
+    - Features: 7 scroll dynamics features
+    - Training Data: Human vs. bot scrolling sessions
+    - Accuracy: ~85-90%
+    - Threshold: 0.5 (>0.5 = BOT, <=0.5 = Human)
+
+  scroll_behavior_explanation: |
+    **What is Scroll Behavior Analysis?**
+
+    Scroll behavior analysis examines how users scroll through content. Human
+    scrolling exhibits natural variability in speed, distance, and timing, while
+    automated scrolling shows mechanical regularity.
+
+    **Key Metrics:**
+
+    1. **Scroll Distance (deltaY):**
+       - Vertical scroll amount per event
+       - Humans: Variable, influenced by content
+       - Bots: Constant (e.g., always -120px)
+
+    2. **Scroll Speed:**
+       - Rate of scrolling (pixels/millisecond)
+       - Humans: Variable with acceleration/deceleration
+       - Bots: Constant throughout session
+
+    3. **Action Grouping:**
+       - Events grouped by 1-second windows
+       - Humans: Irregular patterns with pauses
+       - Bots: Regular, evenly-spaced
+
+    4. **Temporal Patterns:**
+       - Time between events and actions
+       - Humans: Natural pauses to read
+       - Bots: Mechanical intervals
+
+  error_handling: |
+    **Safe Defaults:**
+
+    If ANY error occurs during prediction:
+    - Log the error
+    - Return ("Human", 1.0) to avoid blocking users
+    - Prevents false positives
+
+    **Exception Scenarios:**
+    - No scroll events in data (button != "scroll")
+    - Feature extraction failure (empty DataFrame)
+    - Model inference error
+    - Invalid data format
+
+  integration: |
+    **Called By:** uba-api service
+
+    **Request Flow:**
+    ```
+    client-collector → uba-api → uba-mouse
+                                       → uba-keyboard
+                                       → uba-scroll (this service)
+    ```
+
+    **BentoML Deployment:**
+    ```python
+    @bentoml.service
+    class ScrollService:
+        @bentoml.api
+        async def predict(
+            data: Annotated[pd.DataFrame, DataframeSchema(...)]
+        ) -> Tuple[str, float]:
+            # Prediction logic
+    ```
+
+  example_usage: |
+    **Python Example:**
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:3004/predict",
+        json={
+            "data": [
+                {"timestamp": 1234567890100, "button": "scroll", "state": "move",
+                 "x": 500, "y": 300, "key": "", "deltaY": -120},
+                {"timestamp": 1234567890200, "button": "scroll", "state": "move",
+                 "x": 500, "y": 400, "key": "", "deltaY": -100},
+                {"timestamp": 1234567890320, "button": "scroll", "state": "move",
+                 "x": 500, "y": 500, "key": "", "deltaY": -95}
+            ]
+        }
+    )
+
+    label, probability = response.json()
+    print(f"Prediction: {label} ({probability:.2%})")
+    ```
+
+    **cURL Example:**
+    ```bash
+    curl -X POST http://localhost:3004/predict \
+      -H "Content-Type: application/json" \
+      -d '{
+        "data": [
+          {"timestamp": 1234567890100, "button": "scroll", "state": "move",
+           "x": 500, "y": 300, "key": "", "deltaY": -120}
+        ]
+      }'
+    ```
