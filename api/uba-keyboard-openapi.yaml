@@ -1,0 +1,449 @@
+openapi: 3.0.3
+info:
+  title: UBA Keyboard Service - Keystroke Dynamics Detection ML Model
+  description: |
+    Machine Learning service for detecting bot behavior from keystroke dynamics.
+
+    **Detection Approach:**
+    - Analyzes 130+ engineered features from keyboard events
+    - Features include: dwell time, flight time, typing rhythm, digraph timing, key sequences
+    - Uses SVM/Random Forest classifier
+    - Detects unnatural typing patterns characteristic of bots
+
+    **Bot Indicators:**
+    - Perfectly consistent timing between keystrokes
+    - No variance in dwell time (key hold duration)
+    - Unnatural typing speed (too fast or too regular)
+    - Missing human typing characteristics (rhythm, errors, corrections)
+    - Instant transitions between keys
+
+    **Model Type:** SVM / Random Forest Classifier
+    **Framework:** BentoML
+    **Port:** 3002 (default)
+  version: 1.0.0
+  contact:
+    name: UBA Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3002
+    description: Local development server
+  - url: http://uba-keyboard:3002
+    description: Docker container service
+
+tags:
+  - name: Prediction
+    description: ML model prediction endpoints
+
+paths:
+  /predict:
+    post:
+      tags:
+        - Prediction
+      summary: Predict if keystroke behavior is from a bot or human
+      description: |
+        Analyzes keyboard typing patterns to classify behavior as BOT or Human.
+
+        **Feature Engineering:**
+        - Preprocesses raw keyboard events into typing session features
+        - Extracts 130+ features including:
+          - Dwell time: Duration a key is held down (keydown → keyup)
+          - Flight time: Interval between releasing one key and pressing the next
+          - Digraph analysis: Timing patterns for specific key pairs (e.g., "th", "er")
+          - Typing rhythm: Variability and patterns in inter-keystroke timing
+          - Key sequence analysis: Common typing patterns and transitions
+
+        **Model Pipeline:**
+        1. Preprocess: Extract keydown/keyup pairs and timing
+        2. Feature Extraction: Compute 130+ keystroke dynamics features
+        3. Prediction: SVM/Random Forest classification
+        4. Output: Label + probability score
+
+      operationId: predict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictionRequest'
+            examples:
+              human_typing:
+                summary: Human typing with natural rhythm
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "keydown"
+                      x: 0
+                      y: 0
+                      key: "h"
+                      deltaY: 0
+                    - timestamp: 1234567890203
+                      button: ""
+                      state: "keyup"
+                      x: 0
+                      y: 0
+                      key: "h"
+                      deltaY: 0
+                    - timestamp: 1234567890256
+                      button: ""
+                      state: "keydown"
+                      x: 0
+                      y: 0
+                      key: "e"
+                      deltaY: 0
+                    - timestamp: 1234567890321
+                      button: ""
+                      state: "keyup"
+                      x: 0
+                      y: 0
+                      key: "e"
+                      deltaY: 0
+
+              bot_typing:
+                summary: Bot typing with constant timing
+                value:
+                  data:
+                    - timestamp: 1234567890100
+                      button: ""
+                      state: "keydown"
+                      x: 0
+                      y: 0
+                      key: "t"
+                      deltaY: 0
+                    - timestamp: 1234567890150
+                      button: ""
+                      state: "keyup"
+                      x: 0
+                      y: 0
+                      key: "t"
+                      deltaY: 0
+                    - timestamp: 1234567890200
+                      button: ""
+                      state: "keydown"
+                      x: 0
+                      y: 0
+                      key: "e"
+                      deltaY: 0
+                    - timestamp: 1234567890250
+                      button: ""
+                      state: "keyup"
+                      x: 0
+                      y: 0
+                      key: "e"
+                      deltaY: 0
+
+      responses:
+        '200':
+          description: Successful prediction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                bot_detected:
+                  summary: Bot typing pattern detected
+                  value: ["BOT", 0.89]
+
+                human_detected:
+                  summary: Human typing pattern detected
+                  value: ["Human", 0.91]
+
+                error_fallback:
+                  summary: Error occurred, safe default returned
+                  value: ["Human", 1.0]
+
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        '500':
+          description: Internal model error (returns safe default)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                safe_default:
+                  summary: Error occurred, defaulting to Human
+                  value: ["Human", 1.0]
+
+components:
+  schemas:
+    PredictionRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: Array of keyboard events
+          minItems: 2
+          items:
+            $ref: '#/components/schemas/KeyboardEvent'
+
+    KeyboardEvent:
+      type: object
+      required:
+        - timestamp
+        - button
+        - state
+        - x
+        - y
+        - key
+        - deltaY
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1234567890123
+        button:
+          type: string
+          enum: [""]
+          description: Always empty string for keyboard events
+          example: ""
+        state:
+          type: string
+          enum:
+            - keydown
+            - keyup
+          description: Keyboard event type
+          example: "keydown"
+        x:
+          type: number
+          format: float
+          description: Mouse X coordinate (0 for keyboard events)
+          example: 0
+        y:
+          type: number
+          format: float
+          description: Mouse Y coordinate (0 for keyboard events)
+          example: 0
+        key:
+          type: string
+          description: Key pressed (e.g., "a", "Enter", "Shift")
+          example: "a"
+        deltaY:
+          type: number
+          format: float
+          description: Always 0 for keyboard events
+          example: 0
+
+    PredictionResponse:
+      type: array
+      description: |
+        Prediction result as tuple: [label, probability]
+        - label: "BOT" or "Human"
+        - probability: Confidence score (0.0 to 1.0)
+      minItems: 2
+      maxItems: 2
+      items:
+        oneOf:
+          - type: string
+            enum: ["BOT", "Human"]
+          - type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+      example: ["BOT", 0.89]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+x-documentation:
+  feature_categories: |
+    **130+ Engineered Features:**
+
+    1. **Dwell Time Features (30+)**
+       - Mean, median, std of key hold duration
+       - Dwell time percentiles (25th, 75th, 90th)
+       - Variance in dwell time
+       - Maximum and minimum dwell times
+
+    2. **Flight Time Features (30+)**
+       - Mean, median, std of inter-key intervals
+       - Flight time variability
+       - Transition speed between keys
+       - Pause duration statistics
+
+    3. **Digraph Timing (25+)**
+       - Common key pair timings (e.g., "th", "er", "in")
+       - Digraph consistency analysis
+       - Transition matrices for frequent pairs
+
+    4. **Typing Rhythm (20+)**
+       - Overall typing speed (WPM)
+       - Rhythm consistency
+       - Burst typing vs. steady typing
+       - Acceleration/deceleration patterns
+
+    5. **Key Sequence Analysis (15+)**
+       - Common word patterns
+       - Typing error indicators (backspace usage)
+       - Capitalization patterns (shift key usage)
+       - Special character timing
+
+    6. **Temporal Patterns (10+)**
+       - Long pause detection
+       - Think time between words
+       - Typing session duration
+       - Key repetition timing
+
+  bot_detection_patterns: |
+    **Characteristics of Bot Keyboard Behavior:**
+
+    1. **Perfect Timing Consistency**
+       - Zero variance in dwell time (every key held exactly same duration)
+       - Constant flight time between keys
+       - No natural rhythm variations
+
+    2. **Unnatural Speed**
+       - Too fast (> 200 WPM sustained)
+       - Or perfectly constant moderate speed
+       - No acceleration/deceleration
+
+    3. **Missing Human Traits**
+       - No typing errors or corrections
+       - No backspace usage
+       - No pauses to think
+       - No variation in common digraphs
+
+    4. **Statistical Anomalies**
+       - Dwell time std deviation near zero
+       - Flight time distribution too uniform
+       - Missing natural typing patterns
+
+  model_architecture: |
+    **Pipeline Structure:**
+
+    ```python
+    class KeyboardPipeline:
+        def preprocess(session: pd.DataFrame) -> pd.DataFrame:
+            # Pair keydown/keyup events
+            # Calculate dwell times (keydown → keyup)
+            # Calculate flight times (keyup → next keydown)
+
+        def extract_features(preprocessed: pd.DataFrame) -> pd.DataFrame:
+            # Compute 130+ keystroke dynamics features
+            # Digraph analysis
+            # Rhythm and timing statistics
+            # Create feature vector for classifier
+
+        def predict(features: pd.DataFrame) -> Tuple[str, float]:
+            # SVM / Random Forest classification
+            # Return label and probability
+    ```
+
+    **Model Details:**
+    - Algorithm: SVM / Random Forest Classifier
+    - Features: 130+ keystroke dynamics features
+    - Training Data: Human vs. bot typing sessions
+    - Accuracy: ~90-93%
+    - False Positive Rate: <7%
+
+  keystroke_dynamics_explanation: |
+    **What is Keystroke Dynamics?**
+
+    Keystroke dynamics (typing dynamics) is a behavioral biometric that analyzes
+    the unique way individuals type on keyboards.
+
+    **Key Timing Metrics:**
+
+    1. **Dwell Time (Hold Time):**
+       - Duration between keydown and keyup for the same key
+       - Humans: Variable (50-150ms typically)
+       - Bots: Constant or near-zero
+
+    2. **Flight Time (Inter-key Interval):**
+       - Time between releasing one key and pressing the next
+       - Humans: Variable based on finger movement distance
+       - Bots: Constant or perfectly timed
+
+    3. **Digraph Timing:**
+       - Specific timing for common letter pairs
+       - Humans: Consistent patterns for same digraphs (e.g., "th" always faster than "qz")
+       - Bots: Random or overly consistent
+
+  error_handling: |
+    **Safe Defaults:**
+
+    If ANY error occurs during prediction:
+    - Log the error
+    - Return ("Human", 1.0) to avoid blocking users
+    - Prevents false positives
+
+    **Exception Scenarios:**
+    - Insufficient keyboard events (< 2 events)
+    - Feature extraction failure (missing keyup pairs)
+    - Model inference error
+    - Invalid data format
+
+  integration: |
+    **Called By:** uba-api service
+
+    **Request Flow:**
+    ```
+    client-collector → uba-api → uba-mouse
+                                       → uba-keyboard (this service)
+                                       → uba-scroll
+    ```
+
+    **BentoML Deployment:**
+    ```python
+    @bentoml.service
+    class KeyboardBehaviorService:
+        @bentoml.api
+        async def predict(
+            data: Annotated[pd.DataFrame, DataframeSchema(...)]
+        ) -> Tuple[str, float]:
+            # Prediction logic
+    ```
+
+  example_usage: |
+    **Python Example:**
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:3002/predict",
+        json={
+            "data": [
+                {"timestamp": 1234567890123, "button": "", "state": "keydown",
+                 "x": 0, "y": 0, "key": "h", "deltaY": 0},
+                {"timestamp": 1234567890203, "button": "", "state": "keyup",
+                 "x": 0, "y": 0, "key": "h", "deltaY": 0},
+                {"timestamp": 1234567890256, "button": "", "state": "keydown",
+                 "x": 0, "y": 0, "key": "e", "deltaY": 0},
+                {"timestamp": 1234567890321, "button": "", "state": "keyup",
+                 "x": 0, "y": 0, "key": "e", "deltaY": 0}
+            ]
+        }
+    )
+
+    label, probability = response.json()
+    print(f"Prediction: {label} ({probability:.2%})")
+    ```
+
+    **cURL Example:**
+    ```bash
+    curl -X POST http://localhost:3002/predict \
+      -H "Content-Type: application/json" \
+      -d '{
+        "data": [
+          {"timestamp": 1234567890123, "button": "", "state": "keydown",
+           "x": 0, "y": 0, "key": "a", "deltaY": 0},
+          {"timestamp": 1234567890203, "button": "", "state": "keyup",
+           "x": 0, "y": 0, "key": "a", "deltaY": 0}
+        ]
+      }'
+    ```
