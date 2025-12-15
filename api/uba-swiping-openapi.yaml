@@ -1,0 +1,566 @@
+openapi: 3.0.3
+info:
+  title: UBA Swiping Service - Mobile Touch/Swipe Detection ML Model
+  description: |
+    Machine Learning service for detecting bot behavior from mobile touch and swipe patterns.
+
+    **Detection Approach:**
+    - Analyzes 200+ engineered features from touch/swipe gestures
+    - Features include: velocity, trajectory, pressure, temporal patterns, spatial distribution, gesture shapes
+    - Uses Random Forest / XGBoost classifier
+    - Detects unnatural touch patterns characteristic of automated mobile bots
+
+    **Bot Indicators:**
+    - Perfectly straight swipe lines (no hand jitter)
+    - Constant pressure throughout gesture
+    - Unnatural swipe velocity (too uniform)
+    - Missing touch variation (pressure, size)
+    - Instant tap-to-tap timing
+    - No finger wobble or micro-adjustments
+
+    **Supported Gestures:**
+    - Tap (touchstart → touchend)
+    - Swipe (touchstart → touchmove → touchend)
+    - Pinch/Zoom (multi-touch)
+    - Rotate
+
+    **Model Type:** Random Forest / XGBoost Classifier
+    **Framework:** BentoML
+    **Port:** 3003 (default)
+  version: 1.0.0
+  contact:
+    name: UBA Team
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3003
+    description: Local development server
+  - url: http://uba-swiping:3003
+    description: Docker container service
+
+tags:
+  - name: Prediction
+    description: ML model prediction endpoints
+
+paths:
+  /predict:
+    post:
+      tags:
+        - Prediction
+      summary: Predict if mobile touch/swipe behavior is from a bot or human
+      description: |
+        Analyzes mobile touch and swipe patterns to classify behavior as BOT or Human.
+
+        **Feature Engineering:**
+        - Preprocesses raw touch events into gesture features
+        - Extracts 200+ features including:
+          - Velocity statistics (mean, std, acceleration)
+          - Trajectory analysis (straightness, curvature)
+          - Pressure patterns (variance, distribution)
+          - Temporal features (gesture duration, inter-tap timing)
+          - Spatial features (touch coverage, gesture length)
+          - Touch point characteristics (size, shape)
+
+        **Model Pipeline:**
+        1. Preprocess: Group touch events into gestures
+        2. Feature Extraction: Compute 200+ touch dynamics features
+        3. Prediction: Random Forest/XGBoost classification
+        4. Output: Label + probability score
+
+      operationId: predict
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PredictionRequest'
+            examples:
+              human_swipe:
+                summary: Human swipe gesture with natural variation
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "touchstart"
+                      x: 200
+                      y: 400
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890173
+                      button: ""
+                      state: "touchmove"
+                      x: 220
+                      y: 395
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890223
+                      button: ""
+                      state: "touchmove"
+                      x: 245
+                      y: 388
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890273
+                      button: ""
+                      state: "touchend"
+                      x: 270
+                      y: 380
+                      key: null
+                      deltaY: 0
+
+              bot_swipe:
+                summary: Bot swipe with perfect straight line
+                value:
+                  data:
+                    - timestamp: 1234567890100
+                      button: ""
+                      state: "touchstart"
+                      x: 100
+                      y: 100
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890150
+                      button: ""
+                      state: "touchmove"
+                      x: 150
+                      y: 150
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890200
+                      button: ""
+                      state: "touchmove"
+                      x: 200
+                      y: 200
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890250
+                      button: ""
+                      state: "touchend"
+                      x: 250
+                      y: 250
+                      key: null
+                      deltaY: 0
+
+              human_tap:
+                summary: Human tap gesture
+                value:
+                  data:
+                    - timestamp: 1234567890123
+                      button: ""
+                      state: "touchstart"
+                      x: 300
+                      y: 450
+                      key: null
+                      deltaY: 0
+                    - timestamp: 1234567890223
+                      button: ""
+                      state: "touchend"
+                      x: 302
+                      y: 451
+                      key: null
+                      deltaY: 0
+
+      responses:
+        '200':
+          description: Successful prediction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                bot_detected:
+                  summary: Bot touch pattern detected
+                  value: ["BOT", 0.93]
+
+                human_detected:
+                  summary: Human touch pattern detected
+                  value: ["Human", 0.87]
+
+                error_fallback:
+                  summary: Error occurred, safe default returned
+                  value: ["Human", 1.0]
+
+        '400':
+          description: Invalid request data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+        '500':
+          description: Internal model error (returns safe default)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+              examples:
+                safe_default:
+                  summary: Error occurred, defaulting to Human
+                  value: ["Human", 1.0]
+
+components:
+  schemas:
+    PredictionRequest:
+      type: object
+      required:
+        - data
+      properties:
+        data:
+          type: array
+          description: Array of touch/swipe events
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/TouchEvent'
+
+    TouchEvent:
+      type: object
+      required:
+        - timestamp
+        - button
+        - state
+        - x
+        - y
+        - key
+        - deltaY
+      properties:
+        timestamp:
+          type: integer
+          format: int64
+          description: Unix timestamp in milliseconds
+          example: 1234567890123
+        button:
+          type: string
+          enum: [""]
+          description: Always empty string for touch events
+          example: ""
+        state:
+          type: string
+          enum:
+            - touchstart
+            - touchmove
+            - touchend
+          description: Touch event type
+          example: "touchstart"
+        x:
+          type: number
+          format: float
+          description: Touch X coordinate in pixels
+          example: 200.5
+        y:
+          type: number
+          format: float
+          description: Touch Y coordinate in pixels
+          example: 400.8
+        key:
+          type: string
+          nullable: true
+          description: Always null for touch events
+          example: null
+        deltaY:
+          type: number
+          format: float
+          description: Always 0 for touch events
+          example: 0
+
+    PredictionResponse:
+      type: array
+      description: |
+        Prediction result as tuple: [label, probability]
+        - label: "BOT" or "Human"
+        - probability: Confidence score (0.0 to 1.0)
+      minItems: 2
+      maxItems: 2
+      items:
+        oneOf:
+          - type: string
+            enum: ["BOT", "Human"]
+          - type: number
+            format: float
+            minimum: 0.0
+            maximum: 1.0
+      example: ["BOT", 0.93]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+x-documentation:
+  feature_categories: |
+    **200+ Engineered Features:**
+
+    1. **Velocity Features (40+)**
+       - Swipe velocity statistics (mean, std, max, min)
+       - Acceleration and deceleration patterns
+       - Velocity changes throughout gesture
+       - Instant velocity vs. sustained velocity
+
+    2. **Trajectory Features (40+)**
+       - Path straightness (linear regression fit)
+       - Curvature analysis
+       - Direction changes
+       - Angular velocity
+       - Path complexity metrics
+
+    3. **Pressure Features (30+)** (if available)
+       - Pressure variance throughout gesture
+       - Initial vs. final pressure
+       - Pressure distribution
+       - Pressure consistency
+
+    4. **Temporal Features (30+)**
+       - Gesture duration
+       - Inter-gesture timing (tap to tap)
+       - Touch dwell time (touchstart to touchend)
+       - Pause detection between gestures
+
+    5. **Spatial Features (30+)**
+       - Gesture length (total distance traveled)
+       - Displacement (start to end distance)
+       - Coverage area
+       - Touch point clustering
+       - Screen utilization patterns
+
+    6. **Touch Point Features (30+)**
+       - Touch size variance
+       - Touch shape analysis
+       - Multi-touch patterns (pinch/zoom)
+       - Finger wobble/jitter
+       - Touch precision
+
+  bot_detection_patterns: |
+    **Characteristics of Bot Touch Behavior:**
+
+    1. **Perfect Geometry**
+       - Perfectly straight swipe lines (zero curvature variance)
+       - Constant velocity throughout gesture
+       - No jitter or micro-corrections
+       - Mathematical precision in touch coordinates
+
+    2. **Unnatural Touch Properties**
+       - Constant pressure (if available)
+       - Zero touch size variation
+       - Perfect circular touch points
+       - Missing human finger characteristics
+
+    3. **Unnatural Timing**
+       - Constant inter-gesture intervals
+       - Instant reaction times
+       - No hesitation or exploration
+       - Perfectly timed multi-touch gestures
+
+    4. **Missing Human Traits**
+       - No finger wobble during long press
+       - No overshoot on swipes
+       - No corrective movements
+       - No variation in repeated gestures
+
+    5. **Statistical Anomalies**
+       - Velocity distribution too uniform
+       - Path regression R² = 1.0 (perfect line)
+       - Zero acceleration variance
+       - Touch patterns too systematic
+
+  gesture_types: |
+    **Supported Mobile Gestures:**
+
+    1. **Tap:**
+       - touchstart → touchend (with minimal movement)
+       - Duration: < 200ms typically
+       - Displacement: < 10px
+
+    2. **Swipe:**
+       - touchstart → touchmove(s) → touchend
+       - Duration: Variable
+       - Directional movement (up/down/left/right)
+
+    3. **Long Press:**
+       - touchstart → touchend (with long duration)
+       - Duration: > 500ms
+       - Minimal movement
+
+    4. **Pinch/Zoom (Multi-touch):**
+       - Two simultaneous touch points
+       - Converging (pinch) or diverging (zoom)
+
+    5. **Rotate (Multi-touch):**
+       - Two touch points moving in circular pattern
+
+  model_architecture: |
+    **Pipeline Structure:**
+
+    ```python
+    class SwipingPipeline:
+        def preprocess(session: pd.DataFrame) -> pd.DataFrame:
+            # Group events into gestures
+            # Identify gesture type (tap, swipe, etc.)
+            # Calculate basic kinematics
+
+        def extract_features(preprocessed: pd.DataFrame) -> pd.DataFrame:
+            # Compute 200+ touch/swipe features
+            # Trajectory analysis
+            # Pressure and timing features
+            # Create feature vector for classifier
+
+        def predict(features: pd.DataFrame) -> Tuple[str, float]:
+            # Random Forest / XGBoost classification
+            # Return label and probability
+    ```
+
+    **Model Details:**
+    - Algorithm: Random Forest / XGBoost Classifier
+    - Features: 200+ touch dynamics features
+    - Training Data: Human vs. bot mobile interactions
+    - Accuracy: ~90-95%
+    - False Positive Rate: <5-10%
+
+  mobile_specific_considerations: |
+    **Challenges in Mobile Bot Detection:**
+
+    1. **Device Variation:**
+       - Different screen sizes
+       - Different touch sensor accuracy
+       - Pressure sensor availability varies
+
+    2. **Touch API Limitations:**
+       - Not all browsers expose pressure data
+       - Touch size/radius may not be available
+       - Multi-touch support varies
+
+    3. **Use Case Diversity:**
+       - Gaming gestures vs. form filling
+       - One-handed vs. two-handed usage
+       - Thumb typing vs. finger tapping
+
+    **Model Adaptation:**
+    - Feature engineering robust to missing data
+    - Normalization for screen size differences
+    - Fallback features when pressure unavailable
+
+  error_handling: |
+    **Safe Defaults:**
+
+    If ANY error occurs during prediction:
+    - Log the error
+    - Return ("Human", 1.0) to avoid blocking users
+    - Prevents false positives on mobile apps
+
+    **Exception Scenarios:**
+    - Insufficient touch events
+    - Gesture segmentation failure
+    - Feature extraction error
+    - Model inference error
+    - Missing required touch properties
+
+  integration: |
+    **Called By:** uba-api service (mobile device type only)
+
+    **Request Flow:**
+    ```
+    client-collector → uba-api → uba-swiping (this service)
+                          (device_type=mobile)
+    ```
+
+    **BentoML Deployment:**
+    ```python
+    @bentoml.service
+    class SwipingBehaviorService:
+        @bentoml.api
+        async def predict(
+            data: Annotated[pd.DataFrame, DataframeSchema(...)]
+        ) -> Tuple[str, float]:
+            # Prediction logic
+    ```
+
+  example_usage: |
+    **Python Example:**
+    ```python
+    import requests
+
+    response = requests.post(
+        "http://localhost:3003/predict",
+        json={
+            "data": [
+                {"timestamp": 1234567890123, "button": "", "state": "touchstart",
+                 "x": 200, "y": 400, "key": None, "deltaY": 0},
+                {"timestamp": 1234567890173, "button": "", "state": "touchmove",
+                 "x": 220, "y": 395, "key": None, "deltaY": 0},
+                {"timestamp": 1234567890223, "button": "", "state": "touchmove",
+                 "x": 245, "y": 388, "key": None, "deltaY": 0},
+                {"timestamp": 1234567890273, "button": "", "state": "touchend",
+                 "x": 270, "y": 380, "key": None, "deltaY": 0}
+            ]
+        }
+    )
+
+    label, probability = response.json()
+    print(f"Prediction: {label} ({probability:.2%})")
+    ```
+
+    **JavaScript Example (React Native):**
+    ```javascript
+    const touchEvents = [];
+
+    const handleTouchStart = (e) => {
+      touchEvents.push({
+        timestamp: Date.now(),
+        button: "",
+        state: "touchstart",
+        x: e.nativeEvent.pageX,
+        y: e.nativeEvent.pageY,
+        key: null,
+        deltaY: 0
+      });
+    };
+
+    const handleTouchMove = (e) => {
+      touchEvents.push({
+        timestamp: Date.now(),
+        button: "",
+        state: "touchmove",
+        x: e.nativeEvent.pageX,
+        y: e.nativeEvent.pageY,
+        key: null,
+        deltaY: 0
+      });
+    };
+
+    const handleTouchEnd = async (e) => {
+      touchEvents.push({
+        timestamp: Date.now(),
+        button: "",
+        state: "touchend",
+        x: e.nativeEvent.pageX,
+        y: e.nativeEvent.pageY,
+        key: null,
+        deltaY: 0
+      });
+
+      const response = await fetch('http://localhost:3003/predict', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({data: touchEvents})
+      });
+
+      const [label, probability] = await response.json();
+      console.log(`Detection: ${label} (${(probability * 100).toFixed(1)}%)`);
+    };
+    ```
+
+    **cURL Example:**
+    ```bash
+    curl -X POST http://localhost:3003/predict \
+      -H "Content-Type: application/json" \
+      -d '{
+        "data": [
+          {"timestamp": 1234567890123, "button": "", "state": "touchstart",
+           "x": 200, "y": 400, "key": null, "deltaY": 0},
+          {"timestamp": 1234567890273, "button": "", "state": "touchend",
+           "x": 270, "y": 380, "key": null, "deltaY": 0}
+        ]
+      }'
+    ```
